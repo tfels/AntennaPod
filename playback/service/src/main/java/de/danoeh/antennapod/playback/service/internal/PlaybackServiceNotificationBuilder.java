@@ -18,6 +18,8 @@ import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.app.NotificationCompat;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.request.RequestOptions;
+import de.danoeh.antennapod.model.feed.Chapter;
+import de.danoeh.antennapod.model.feed.EmbeddedChapterImage;
 import de.danoeh.antennapod.playback.service.MediaButtonReceiver;
 import de.danoeh.antennapod.playback.service.PlaybackService;
 import de.danoeh.antennapod.playback.service.R;
@@ -28,6 +30,8 @@ import de.danoeh.antennapod.ui.episodes.ImageResourceUtils;
 import de.danoeh.antennapod.ui.episodes.TimeSpeedConverter;
 import de.danoeh.antennapod.ui.notifications.NotificationUtils;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import de.danoeh.antennapod.playback.base.PlayerStatus;
@@ -41,7 +45,7 @@ public class PlaybackServiceNotificationBuilder {
     private Playable playable;
     private MediaSessionCompat.Token mediaSessionToken;
     private PlayerStatus playerStatus;
-    private Bitmap icon;
+    private Map<Integer, Bitmap> chapterIcons;
     private String position;
 
     public PlaybackServiceNotificationBuilder(@NonNull Context context) {
@@ -53,10 +57,11 @@ public class PlaybackServiceNotificationBuilder {
             clearCache();
         }
         this.playable = playable;
+        this.chapterIcons = new HashMap<Integer,Bitmap>();
     }
 
     private void clearCache() {
-        this.icon = null;
+        this.chapterIcons = null;
         this.position = null;
     }
 
@@ -65,17 +70,38 @@ public class PlaybackServiceNotificationBuilder {
         this.position = Converter.getDurationStringLong(converter.convert(position));
     }
 
+    private int getChapterIdx() {
+        int displayedChapterIndex = -1;
+        if(playable == null)
+            return 0;
+        if (playable.getPosition() > playable.getDuration()) {
+            displayedChapterIndex = playable.getChapters().size() - 1;
+        } else {
+            displayedChapterIndex = Chapter.getAfterPosition(playable.getChapters(), playable.getPosition());
+        }
+        if(displayedChapterIndex<0)
+            displayedChapterIndex = 0;
+        return displayedChapterIndex;
+    }
+
     public boolean isIconCached() {
-        return icon != null;
+        try {
+            return chapterIcons.get(getChapterIdx()) != null;
+        } catch(Exception e ) {
+            return false;
+        }
     }
 
     public void loadIcon() {
         int iconSize = (int) (128 * context.getResources().getDisplayMetrics().density);
         final RequestOptions options = new RequestOptions().centerCrop();
+        final int chapterIdx = getChapterIdx();
+        Bitmap icon = null;
+
         try {
             icon = Glide.with(context)
                     .asBitmap()
-                    .load(playable.getImageLocation())
+                    .load(chapterIdx<=0 ? playable.getImageLocation() : EmbeddedChapterImage.getModelFor(playable, chapterIdx))
                     .apply(options)
                     .submit(iconSize, iconSize)
                     .get();
@@ -99,10 +125,11 @@ public class PlaybackServiceNotificationBuilder {
         } catch (Throwable tr) {
             Log.e(TAG, "Error loading the media icon for the notification", tr);
         }
+        chapterIcons.put(chapterIdx, icon);
     }
 
     public Bitmap getCachedIcon() {
-        return icon;
+        return chapterIcons.get(getChapterIdx());
     }
 
     private Bitmap getDefaultIcon() {
@@ -141,8 +168,8 @@ public class PlaybackServiceNotificationBuilder {
             notification.setContentText(playable.getEpisodeTitle());
             addActions(notification, mediaSessionToken, playerStatus);
 
-            if (icon != null) {
-                notification.setLargeIcon(icon);
+            if (getCachedIcon() != null) {
+                notification.setLargeIcon(getCachedIcon());
             } else {
                 notification.setLargeIcon(getDefaultIcon());
             }
